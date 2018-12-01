@@ -7,7 +7,6 @@ import org.apache.commons.io.FileUtils;
 import sun.awt.Mutex;
 
 import java.io.*;
-import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -164,7 +163,7 @@ public class ReadFile {
     }
 
     private void startParseThread(List<String> doc, int docID) {
-        Runnable r = new MyRunnable(extractDocText(doc), docID);
+        Runnable r = new MyRunnable(cloneDocument(doc), docID);
         threadPool.execute(r);
     }
 
@@ -246,36 +245,14 @@ public class ReadFile {
     ///////////////////////////////////////////////////////////////////////////////////
     /////***this functions may be moved to the Parse class.***////////////////////////
 
-    public List<String> readDocument(String path) {
-        List<String> lineList = null;
-        try {
-            lineList = Files.readAllLines(Paths.get(path), Charset.forName("UTF-8"));
-
-        } catch (IOException e) {
-            //for foemer file coding.
-            try {
-                lineList = Files.readAllLines(Paths.get(path), Charset.forName("ISO-8859-1"));
-            } catch (IOException e1) {
-                e1.printStackTrace();
-            }
-        }
-        return extractDocText(lineList);
 
 
-    }
-
-    public List<String> extractDocText(List<String> lineList) {
+    public List<String> cloneDocument(List<String> lineList) {
         List<String> fileText = new ArrayList<>();
         boolean isText = false;
         for (int i = 0; i < lineList.size(); i++) {
             String line = lineList.get(i);
-            if (line.equals("<TEXT>")) {
-                isText = true;
-            }
-            if (line.equals("</TEXT>"))
-                isText = false;
-            if (isText)
-                fileText.add(line);
+            fileText.add(line);
         }
         if (!fileText.isEmpty())
             fileText.remove(0);
