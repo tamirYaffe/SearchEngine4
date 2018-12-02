@@ -1,8 +1,8 @@
 package SearchEngineTools.ParsingTools;
 
 import SearchEngineTools.ParsingTools.Term.*;
-import SearchEngineTools.ReadFile;
-//import eu.fayder.restcountries.v1.rest.CountryService;
+import eu.fayder.restcountries.v1.domain.Country;
+import eu.fayder.restcountries.v1.rest.CountryService;
 import javafx.util.Pair;
 import sun.awt.Mutex;
 
@@ -38,7 +38,6 @@ public class Parse {
 
     //stop words to be removed
     protected Collection<String> stopWords;
-    private Mutex mutex=new Mutex();
 
     //characters to be removed from beginning and end of words
     private Collection<Character> necessaryChars;
@@ -48,6 +47,10 @@ public class Parse {
     private List<String> delimeters;
 
     private Collection<Character> delimitersToSplitWordBy;
+
+    //private static CountryService countryService = CountryService.getInstance();
+
+    protected Mutex mutex = new Mutex();
 
 
     /**
@@ -208,39 +211,160 @@ public class Parse {
     /////////////////////////////////////////////
 
 
-    public Collection<ATerm> parseDocument(List<String> document){
+    public Collection<ATerm> parseDocumentTextWithoutLocations(List<String> document){
         Map<ATerm,Integer> occurrencesOfTerms = new HashMap<>();
-        List<ATerm> terms=new ArrayList<>();
         List<String> tokens=tokenize(document);
-        //get terms
+        List<ATerm> terms=getAllTerms(tokens);
+
+        return getFinalList(terms, occurrencesOfTerms);
+        //remove stop words.
+        //allow stemming.
+    }
+
+    private List<ATerm> getAllTerms(List<String> tokens){
         List<ATerm> next;
+        List<ATerm> terms = new ArrayList<>();
         do{
             next = getNextTerm(tokens);
             if(next!=null) {
                 terms.addAll(next);
             }
         }while (next != null);
-
-        //addTermsToList(terms, occurrencesOfTerms);
-        return getFinalList(terms, occurrencesOfTerms);
+        return terms;
     }
 
+    public Collection<ATerm> parseDocument(List<String> documentLines){
+        List<Pair<String,Integer>> tokensAndLocations = new ArrayList<>();
+        List<ATerm> finalList = new ArrayList<>();
+        Map<ATerm,Pair<ATerm,Integer>> occurrencesOfTerms = new HashMap<>();
+        addCityNameAndText(documentLines,tokensAndLocations,occurrencesOfTerms);
 
-    protected void removeStopWords(List<ATerm> toRemoveFrom){
-        if(stopWords!=null){
-            for (ATerm term: toRemoveFrom) {
-                if(stopWords.contains(term.getTerm().toLowerCase()))
-                    toRemoveFrom.remove(term);
+        finalList.addAll(getAllTermsFromStringAndInteger(tokensAndLocations));
+
+        return getFinalListFromTermAndInteger(finalList,occurrencesOfTerms);
+    }
+
+    private List<ATerm> getAllTermsFromStringAndInteger(List<Pair<String, Integer>> tokensAndLocations) {
+        List<ATerm> next;
+        List<ATerm> terms = new ArrayList<>();
+        do{
+            next = getNextTermFromStringAndInteger(tokensAndLocations);
+            if(next!=null) {
+                terms.addAll(next);
             }
-        }
+        }while (next != null);
+        return terms;
     }
 
-    protected void addToOccurancesList(ATerm term, Map<ATerm, Integer> occurances) {
+
+    private void addCityNameAndText(List<String> documentLines, List<Pair<String,Integer>> fileTextAndLocations, Map<ATerm,Pair<ATerm,Integer>> addCityTermTo){
+        int wordCount = 0;
+        boolean isText = false;
+        for (String documentLine:documentLines) {
+            boolean changedWordCount = false;
+            if(documentLine.contains("<F P=104>")){
+                wordCount+=addCityTermAndChangeWordCount(documentLine,addCityTermTo);
+                changedWordCount = true;
+            }
+            if (documentLine.equals("<TEXT>")) {
+                isText = true;
+                if(!changedWordCount)
+                    wordCount+=1;
+                changedWordCount = true;
+            }
+            if (documentLine.equals("</TEXT>")) {
+                isText = false;
+                if(!changedWordCount)
+                    wordCount+=1;
+                changedWordCount = true;
+            }
+            if (isText) {
+                if(!changedWordCount)
+                    wordCount+=addTextToFileTextAndLocations(documentLine,fileTextAndLocations,wordCount);
+                changedWordCount = true;
+            }
+            if(!changedWordCount)
+                wordCount+=getDocumentLineWordCount(documentLine);
+        }
+
+    }
+
+    private int addTextToFileTextAndLocations(String textLine, List<Pair<String, Integer>> fileTextAndLocations, int wordCount) {
+        String[] splitTextLine = textLine.split(" ");
+        for (String word:splitTextLine) {
+            if(word.length()==0){
+                wordCount++;
+                continue;
+            }
+            //add word to list
+            word = removeUnnecessaryChars(word);
+            if(word!=null && word.length()>0){
+                fileTextAndLocations.add(new Pair<>(word,wordCount));
+            }
+            //increase wordCount
+            wordCount++;
+        }
+        return getDocumentLineWordCount(textLine);
+    }
+
+    private int addCityTermAndChangeWordCount(String documentLine, Map<ATerm,Pair<ATerm,Integer>> addCityTermTo) {
+        String[] splitLine = documentLine.split(" ");
+        int firstCityIndex = 0;
+        //find first index in array that may contain city name
+        while (!splitLine[firstCityIndex].equals("P=104>"))
+            firstCityIndex++;
+        firstCityIndex++;
+        while (splitLine[firstCityIndex].length()==0 && firstCityIndex<splitLine.length)
+            firstCityIndex++;
+        if(firstCityIndex==splitLine.length)
+            return splitLine.length;
+
+        //find city
+        boolean foundCity = false;
+        String cityName = splitLine[firstCityIndex];
+        while (!foundCity && firstCityIndex<splitLine.length){
+            /*List<Country> countryList = countryService.getByCapital(cityName);
+            if(countryList!=null && !countryList.isEmpty()){
+                CityTerm cityTerm = new CityTerm(cityName);
+                cityTerm.setAsOrigin();
+                addCityTermTo.put(cityTerm,new Pair<>(cityTerm,0));
+                break;
+            }*/
+            while (splitLine[firstCityIndex].length()==0 && firstCityIndex<=splitLine.length)
+                firstCityIndex++;
+            if(firstCityIndex==splitLine.length)
+                return splitLine.length;
+            cityName+=" "+splitLine[firstCityIndex];
+        }
+        return splitLine.length;
+    }
+
+    private int getDocumentLineWordCount(String documentLine){
+        if (documentLine.length()==0)
+            return 0;
+        String[] splitLine = documentLine.split(" ");
+        return splitLine.length;
+    }
+
+
+
+    private void addToOccurancesList(ATerm term, Map<ATerm, Integer> occurances) {
         occurances.putIfAbsent(term,0);
         occurances.replace(term,occurances.get(term)+1);
     }
 
-    protected void addWordTermToList(WordTerm term, Map<ATerm,Integer> occurrencesOfTerms, boolean isLowerCase){
+    private void addToOccurrencesListPairAndInteger(ATerm term, Map<ATerm, Pair<ATerm,Integer>> occurrences) {
+        if(occurrences.keySet().contains(term)){
+            Pair<ATerm,Integer> oldPair = occurrences.get(term);
+            Pair<ATerm,Integer> newPair = new Pair<>(oldPair.getKey(),oldPair.getValue()+1);
+            occurrences.replace(term,newPair);
+        }
+        else {
+            occurrences.put(term,new Pair<>(term,1));
+        }
+    }
+
+    private void addWordTermToList(WordTerm term, Map<ATerm,Integer> occurrencesOfTerms, boolean isLowerCase){
         term.toLowerCase();
         boolean existsLowercase = occurrencesOfTerms.containsKey(term);
         term.toUperCase();
@@ -266,6 +390,61 @@ public class Parse {
         else
             addToOccurancesList(term,occurrencesOfTerms);
     }
+
+    private void addWordTermToListTermAndInteger(WordTerm term, Map<ATerm,Pair<ATerm,Integer>> occurrencesOfTerms, boolean isLowerCase){
+        if(term instanceof CityTerm){
+            addCityTermToList((CityTerm) term,occurrencesOfTerms,isLowerCase);
+            return;
+        }
+        term.toLowerCase();
+        boolean existsLowercase = occurrencesOfTerms.containsKey(term);
+        term.toUperCase();
+        boolean existsUppercase = occurrencesOfTerms.containsKey(term);
+
+
+        if(isLowerCase && existsUppercase){
+            Pair<ATerm,Integer> oldPair = occurrencesOfTerms.get(term);
+            int occurrancesOfTerm = oldPair.getValue()+1;
+            occurrencesOfTerms.remove(term);
+            term.toLowerCase();
+            if(existsLowercase) {
+                occurrancesOfTerm+=occurrencesOfTerms.get(term).getValue();
+                occurrencesOfTerms.replace(term, new Pair<>(term,occurrancesOfTerm));
+            }
+            else
+                occurrencesOfTerms.put(term,new Pair<>(term,occurrancesOfTerm));
+        }
+        else if(isLowerCase){
+            term.toLowerCase();
+            addToOccurrencesListPairAndInteger(term,occurrencesOfTerms);
+        }
+        else if (existsLowercase){
+            term.toLowerCase();
+            addToOccurrencesListPairAndInteger(term,occurrencesOfTerms);
+        }
+        else
+            addToOccurrencesListPairAndInteger(term,occurrencesOfTerms);
+    }
+
+    private void addCityTermToList(CityTerm term, Map<ATerm, Pair<ATerm,Integer>> occurrencesOfTerms, boolean isLowerCase) {
+        if(occurrencesOfTerms.keySet().contains(term)){
+            Pair<ATerm,Integer> oldPair = occurrencesOfTerms.get(term);
+            //get city
+            CityTerm cityTerm = (CityTerm) oldPair.getKey();
+            cityTerm.addAllPositions(term);
+
+            //get occurrences
+            int occurrences = oldPair.getValue()+1;
+
+            occurrencesOfTerms.remove(term);
+            occurrencesOfTerms.put(cityTerm,new Pair<>(cityTerm,occurrences));
+        }
+        else {
+            occurrencesOfTerms.put(term,new Pair<>(term,1));
+        }
+    }
+
+
     Collection<ATerm> getFinalList(List<ATerm> from, Map<ATerm,Integer> occurrencesOfTerms){
         for (ATerm t:from) {
             if(t instanceof WordTerm){
@@ -277,6 +456,21 @@ public class Parse {
         }
         for (ATerm t:occurrencesOfTerms.keySet()) {
             t.setOccurrences(occurrencesOfTerms.get(t));
+        }
+        return occurrencesOfTerms.keySet();
+    }
+
+    Collection<ATerm> getFinalListFromTermAndInteger(List<ATerm> from, Map<ATerm,Pair<ATerm,Integer>> occurrencesOfTerms){
+        for (ATerm t:from) {
+            if(t instanceof WordTerm){
+                addWordTermToListTermAndInteger((WordTerm) t,occurrencesOfTerms,Character.isLowerCase(t.getTerm().charAt(0)));
+            }
+            else{
+                addToOccurrencesListPairAndInteger(t,occurrencesOfTerms);
+            }
+        }
+        for (ATerm t:occurrencesOfTerms.keySet()) {
+            t.setOccurrences(occurrencesOfTerms.get(t).getValue());
         }
         return occurrencesOfTerms.keySet();
     }
@@ -429,6 +623,69 @@ public class Parse {
         return new FractionTerm(numerator,denominator);
     }
 
+    private void AddNextNumberTermFromStringAndInteger(List<Pair<String,Integer>> tokens, ATerm nextTerm, List<ATerm> toReturn){
+        //get next word
+        if(!tokens.isEmpty()) {
+            String nextToken = tokens.get(0).getKey();
+            //check year
+            Pair<String,Integer> year = null;
+            if(isInteger(((NumberTerm)nextTerm).getValue())){
+                year=getNextRelevantTermFromStringAndInteger(tokens,years);
+            }
+            if(year!=null){
+                nextTerm = new YearTerm((NumberTerm) nextTerm,this.years.get(year.getKey()));
+                for (int i = 0; i <= year.getValue(); i++) {
+                    tokens.remove(0);
+                }
+            }
+            //check if percentage
+            else if (percentWords.contains(nextToken)) {
+                nextTerm = new PercentageTerm((NumberTerm)nextTerm);
+                tokens.remove(0);
+            }
+            //check if month
+            else if((((NumberTerm) nextTerm).isInteger(((NumberTerm) nextTerm))) //number is integer
+                    && getMonthWords().contains(nextToken) && //next word is month
+                    (((NumberTerm) nextTerm).getValueOfNumber()>0) && //number is at least one
+                    ((NumberTerm) nextTerm).getValueOfNumber()<=lastDayInMonth.get(months.get(nextToken)) //number is smaller than last day in month
+            ){
+                nextTerm = new DateTerm(months.get(nextToken),(int)((NumberTerm) nextTerm).getValueOfNumber());
+                tokens.remove(0);
+            }
+            else {
+                boolean isFraction = false;
+                //check if value
+                if (getValueKeywords().contains(nextToken)) {
+                    Value val = valuesAfterNumber.get(nextToken);
+                    ((NumberTerm) nextTerm).multiply(val);
+                    //remove keyword after use
+                    tokens.remove(0);
+
+                }
+                //check if fraction
+                else if(isFraction(nextToken)){
+                    nextTerm = new CompoundFractionTerm((NumberTerm)nextTerm,getFractionTerm(nextToken));
+                    tokens.remove(0);
+                    isFraction = true;
+                }
+                //check if currency
+                Pair<String,Integer> currencyNameAndLocation = null;
+                if(!tokens.isEmpty()) {
+                    currencyNameAndLocation = getNextRelevantTermFromStringAndInteger(tokens,currencyTypes);
+                }
+                if(currencyNameAndLocation != null){
+                    nextTerm = isFraction ? new CompoundFractionCurrencyTerm((CompoundFractionTerm)nextTerm, this.currencyTypes.get(currencyNameAndLocation.getKey()))
+                            : new CurrencyTerm((NumberTerm)nextTerm, currencyTypes.get(currencyNameAndLocation.getKey()));
+                    for (int i = 0; i<=currencyNameAndLocation.getValue(); i++){
+                        tokens.remove(0);
+                    }
+                }
+            }
+        }
+        //no suitable next word found, return number
+        toReturn.add(nextTerm);
+    }
+
     private void AddNextNumberTerm(List<String> tokens, ATerm nextTerm, List<ATerm> toReturn){
         //get next word
         if(!tokens.isEmpty()) {
@@ -568,6 +825,116 @@ public class Parse {
         return;
     }
 
+    private void addWordTermFromStringAndInteger(List<Pair<String,Integer>> tokens,Pair<String,Integer> tokenPair,List<ATerm> toReturn){
+        ATerm nextTerm=null;
+        String token = tokenPair.getKey();
+        int tokenPosition = tokenPair.getValue();
+
+        //check percentage
+        if(isPercentage(token)){
+            nextTerm = getPercentageTerm(token);
+            toReturn.add(nextTerm);
+            return;
+        }
+        //check currency
+        else if(isCurrency(token)){
+            nextTerm = getCurrencyTermFromStringAndInteger(token,tokens);
+            toReturn.add(nextTerm);
+            return;
+        }
+        //check month
+        else if(getMonthWords().contains(token)){
+            String nextToken = tokens.isEmpty() ? null : tokens.get(0).getKey();
+            if(nextToken!=null && isNumber(nextToken) && isInteger(nextToken)){
+                int day = Integer.parseInt(nextToken);
+                if(day>0 && day<lastDayInMonth.get(months.get(token))){
+                    nextTerm = new DateTerm(months.get(token),day);
+                    toReturn.add(nextTerm);
+                    tokens.remove(0);
+                    return;
+                }
+            }
+        }
+        //check hyphenated word
+        else if(isHyphenatedWord(token)){
+            toReturn.addAll(getHyphenatedTokensFromStringAndInteger(tokenPair,tokens));
+            return;
+        }
+        else{
+            //check cityTerm
+            nextTerm = getCityTerm(tokens,tokenPosition,token,5);
+            if(nextTerm!=null){
+                toReturn.add(nextTerm);
+                return;
+            }
+        }
+        boolean isNumber = false;
+        boolean isFraction = false;
+        //check number with value
+        if(isNumberWithValue(token)){
+            isNumber =true;
+            nextTerm = splitWord(token);
+            //if list is now empty, return, else switch token to next word
+            if(tokens.isEmpty()){
+                toReturn.add(nextTerm);
+                return;
+            }
+            else{
+                token = tokens.get(0).getKey();
+            }
+        }
+        //check fraction
+        if(isFraction(token)){
+            isFraction = true;
+            nextTerm = isNumber ? new CompoundFractionTerm((NumberTerm) nextTerm, getFractionTerm(token)) : getFractionTerm(token);
+            if(isNumber)
+                tokens.remove(0);
+            isNumber = true;
+            //if list is now empty, return, else switch token to next word
+            if(tokens.isEmpty()){
+                toReturn.add(nextTerm);
+                return;
+            }
+            else{
+                token = tokens.get(0).getKey();
+            }
+        }
+        //check currency
+        if(isNumber && getCurrencyStrings().contains(token)){
+            nextTerm = isFraction ? new CompoundFractionCurrencyTerm((CompoundFractionTerm) nextTerm,token) : new CurrencyTerm((NumberTerm) nextTerm,token);
+            tokens.remove(0);
+            toReturn.add(nextTerm);
+            return;
+        }
+
+        //split word by non numbers and letter
+        toReturn.addAll(getFinalWorTermListFromStringAntInteger(tokenPair,tokens));
+        return;
+    }
+
+    private ATerm getCityTerm(List<Pair<String, Integer>> tokens,int tokenPosition, String token, int maxIterations) {
+        List<Country> countries;
+        int iterations = 0;
+        String cityName = token;
+        //get city term
+        //if exists, break else return null
+        /*while (true){
+            countries = countryService.getByCapital(cityName);
+            if(countries!=null && !countries.isEmpty()){
+                CityTerm cityTerm = new CityTerm(cityName,tokenPosition);
+                for (int i = 0; i < iterations; i++) {
+                    tokens.remove(i);
+                }
+                return cityTerm;
+            }
+            iterations++;
+            if(iterations>maxIterations || tokens.size()<(iterations+1))
+                return null;
+            cityName+=" "+tokens.get(iterations).getKey();
+        }*/
+        return null;
+    }
+
 
     private boolean isCurrencyToken(String s) {
         if(s!=null && s.length()==1 && getCurrencySymbols().contains(s.charAt(0)))
@@ -627,13 +994,68 @@ public class Parse {
         return toReturn;
     }
 
+    private List<ATerm> getFinalWorTermListFromStringAntInteger(Pair<String,Integer> s, List<Pair<String,Integer>> tokens){
+        return getFinalWorTermListFromStringAntInteger(s,tokens,new ArrayList<>(0));
+    }
+
+    private List<ATerm> getFinalWorTermListFromStringAntInteger(Pair<String,Integer> wordAndLocation, List<Pair<String,Integer>> tokens, Collection<Character> delimitersToIgnore) {
+        List<ATerm> toReturn = new ArrayList<>();
+        String s = wordAndLocation.getKey();
+        int position = wordAndLocation.getValue();
+        //get all desired substrings
+        //split the word into parts
+        List<Pair<Integer,Integer>> desiredSubstrings = new ArrayList<>();
+        for (int i = 0, firstDesiredIndex=0; i < s.length(); i++) {
+            if(!Character.isLetter(s.charAt(i)) && !Character.isDigit(s.charAt(i)) && !delimitersToIgnore.contains(s.charAt(i))){
+                int newFirstDesiredIndex;
+                if(currencySymbols.contains(s.charAt(i))) {
+                    if(i==firstDesiredIndex)
+                        continue;
+                    newFirstDesiredIndex = i;
+                }
+                else
+                    newFirstDesiredIndex=i+1;
+
+                if(i==s.length()-1){
+                    if(i>firstDesiredIndex)
+                        desiredSubstrings.add(new Pair<>(firstDesiredIndex,i));
+                }
+                else
+                    desiredSubstrings.add(new Pair<>(firstDesiredIndex,i));
+                firstDesiredIndex = newFirstDesiredIndex;
+            }
+            else if(i==s.length()-1)
+                desiredSubstrings.add(new Pair<>(firstDesiredIndex,i+1));
+        }
+        //check if only one string
+        if(desiredSubstrings.isEmpty())
+            return toReturn;
+        else if(desiredSubstrings.size()==1){
+            WordTerm term = createWordTerm(s.substring(desiredSubstrings.get(0).getKey(),desiredSubstrings.get(0).getValue()));
+            if(term!=null)
+                toReturn.add(term);
+            return toReturn;
+        }
+        List<Pair<String,Integer>> tokensToAdd = new ArrayList<>();
+
+        for (Pair<Integer,Integer> substring:desiredSubstrings) {
+            String token = s.substring(substring.getKey(),substring.getValue());
+            token = removeUnnecessaryChars(token);
+            if(token!= null && token.length()>0)
+                tokensToAdd.add(new Pair<>(token,position));
+        }
+        //prepend desired tokens to list
+        tokens.addAll(0,tokensToAdd);
+        return toReturn;
+    }
+
     protected WordTerm createWordTerm(String s) {
         mutex.lock();
-        boolean isStopWord=stopWords.contains(s.toLowerCase());
+        boolean isStopWord = stopWords.contains(s.toLowerCase());
         mutex.unlock();
         if(!isStopWord)
             return new WordTerm(s);
-        else return null;
+        return null;
     }
 
     private boolean isStopWord(String token) {
@@ -641,7 +1063,7 @@ public class Parse {
         return stopWords.contains(lowerCaseToken);
     }
 
-    protected List<ATerm> getNextTerm(List<String> tokens){
+    private List<ATerm> getNextTerm(List<String> tokens){
         List<ATerm> toReturn = new ArrayList<>();
         ATerm nextTerm = null;
         //if list is empty, no tokens
@@ -661,10 +1083,41 @@ public class Parse {
         return toReturn;
     }
 
+
+    private List<ATerm> getNextTermFromStringAndInteger(List<Pair<String,Integer>> tokens){
+        List<ATerm> toReturn = new ArrayList<>();
+        ATerm nextTerm = null;
+        //if list is empty, no tokens
+        if(tokens.size() == 0)
+            return null;
+        Pair<String,Integer> tokenPair = tokens.get(0);
+        String token = tokenPair.getKey();
+        int tokenPosition = tokenPair.getValue();
+        tokens.remove(0);
+        //if is number
+        if(isNumber(token)) {
+            nextTerm = new NumberTerm(token);
+            AddNextNumberTermFromStringAndInteger(tokens,nextTerm,toReturn);
+        }
+        //word
+        else {
+            addWordTermFromStringAndInteger(tokens,tokenPair,toReturn);
+        }
+        return toReturn;
+    }
+
     private List<ATerm> getHyphenatedTokens(String token, List<String> tokens) {
         List<ATerm> hyphenatedToken = getFinalWorTermList(token,tokens,delimitersToSplitWordBy);
         if(!(hyphenatedToken==null || hyphenatedToken.isEmpty())){
             hyphenatedToken.addAll(getFinalWorTermList(token,tokens));
+        }
+        return hyphenatedToken;
+    }
+
+    private List<ATerm> getHyphenatedTokensFromStringAndInteger(Pair<String,Integer> token, List<Pair<String,Integer>> tokens) {
+        List<ATerm> hyphenatedToken = getFinalWorTermListFromStringAntInteger(token,tokens,delimitersToSplitWordBy);
+        if(!(hyphenatedToken==null || hyphenatedToken.isEmpty())){
+            hyphenatedToken.addAll(getFinalWorTermListFromStringAntInteger(token,tokens));
         }
         return hyphenatedToken;
     }
@@ -767,12 +1220,44 @@ public class Parse {
         return null;
     }
 
+    private CurrencyTerm getCurrencyTermFromStringAndInteger(String s,List<Pair<String,Integer>> tokens){
+        Value val = null;
+        if(!tokens.isEmpty() && getValueKeywords().contains(tokens.get(0).getKey()))
+            val = valuesAfterNumber.get(tokens.remove(0).getKey());
+        if(isCurrency(s)){
+            String currencySymbol = s.substring(0,1);
+            String currency = currencyTypes.get(currencySymbol);
+            NumberTerm term = new NumberTerm(s.substring(1));
+            if(val!=null)
+                term.multiply(val);
+            return new CurrencyTerm(term,currency);
+        }
+        return null;
+    }
     private static Pair<String, Integer> getNextRelevantTerm(List<String> tokens, ParsingHashMap toGetFrom){
         Pair<String,Integer> toReturn = null;
         String toCheck = "";
         Collection<String> keys = toGetFrom.keySet();
         for (int i = 0; i < toGetFrom.getWordsInLongestKey() && i<tokens.size(); i++) {
             String toAdd = tokens.get(i);
+            if(i!=0)
+                toCheck+=(" "+toAdd);
+            else
+                toCheck+=toAdd;
+            if(keys.contains(toCheck)) {
+                toReturn = new Pair<>(toCheck, i);
+                break;
+            }
+        }
+        return toReturn;
+    }
+
+    private static Pair<String, Integer> getNextRelevantTermFromStringAndInteger(List<Pair<String,Integer>> tokens, ParsingHashMap toGetFrom){
+        Pair<String,Integer> toReturn = null;
+        String toCheck = "";
+        Collection<String> keys = toGetFrom.keySet();
+        for (int i = 0; i < toGetFrom.getWordsInLongestKey() && i<tokens.size(); i++) {
+            String toAdd = tokens.get(i).getKey();
             if(i!=0)
                 toCheck+=(" "+toAdd);
             else
@@ -850,55 +1335,11 @@ public class Parse {
             this.years = new ParsingHashMap(years);
     }
 
-
-    private int getWordCount(String s){
-        String[] split = s.split(" ");
-        return split.length;
-    }
-
-    /*private void addCityTerm(List<String> doc,Collection<ATerm> addTo){
-        int wordCount = 0;
-        for (String s:doc) {
-            if(s.contains("<F P=104>")){
-                //get line until <F P=104>
-                String[] splitS;
-                boolean foundCity = false;
-                for (int i = 0; i < s.length() && !foundCity; i++) {
-                    if(s.charAt(i)==' ')
-                        wordCount++;
-                    if(i>=8 && s.substring(i-8,i+1).equals("<F P=104>")){
-                        foundCity = true;
-                        splitS = s.substring(i).split(" ");
-                        if(splitS.length>0) {
-                            String cityName = null;
-                            int splitS_index = 0;
-                            do {
-                                cityName = cityName==null ? splitS[splitS_index] : cityName+" "+splitS[splitS_index];
-                                if(CountryService.getInstance().getByCapital(cityName)!=null){
-                                    CityTerm toReturn = new CityTerm(cityName,wordCount);
-                                    addTo.add(toReturn);
-                                }
-                                wordCount++;
-                            }while (splitS_index<s.length());
-                        }
-                    }
-                }
-            }
-            else {
-                wordCount+=getWordCount(s);
-            }
-        }
-    }
-    private Collection<ATerm> processDoc(List<String> s){
-        List<String> text = ReadFile.extractDocText(s);
-        Collection<ATerm> toReturn = new ArrayList<>();
-        addCityTerm(s,toReturn);
-        //((ArrayList<ATerm>) toReturn).addAll(parseDocument(text));
-        return toReturn;
-    }*/
-
-
     public void setStopWords(Collection<String> stopWords){
         this.stopWords = stopWords;
     }
+
+
+
+
 }

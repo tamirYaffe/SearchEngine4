@@ -1,5 +1,6 @@
 package SearchEngineTools;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class CityPostingEntry {
@@ -8,6 +9,7 @@ public class CityPostingEntry {
 
     public CityPostingEntry(int docID,List<Integer>positions){
         this.docID=docID;
+        this.positions=new ArrayList<>();
         for(int position:positions)
             this.positions.add(0,""+position);
     }

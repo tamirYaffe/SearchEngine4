@@ -21,7 +21,10 @@ public class ParseWithStemming extends Parse {
 
     @Override
     protected WordTerm createWordTerm(String s) {
-        if(stopWords.contains(s.toLowerCase()))
+        mutex.lock();
+        boolean isStopWord = stopWords.contains(s.toLowerCase());
+        mutex.unlock();
+        if(isStopWord)
             return null;
         boolean isUpperCase = false;
         for (int i = 0; i < s.length(); i++) {
